@@ -102,6 +102,7 @@ td, th {
   font-size: 14px;
 }
 .badge {
+  display: inline-block;
   background: #304f3c;
   border-radius: 20px;
   padding: 7px 11px;
@@ -136,8 +137,6 @@ td, th {
   margin-top: 12px;
 }
 button:disabled { opacity: .5; }
-
-/* Новое оформление личного состава */
 .unit-section {
   margin: 18px 0;
   border: 1px solid #365040;
@@ -194,6 +193,22 @@ button:disabled { opacity: .5; }
 .empty-state {
   color: #abc0af;
   padding: 15px;
+}
+.academy-section {
+  border: 1px solid #7b7040;
+  border-radius: 13px;
+  padding: 14px;
+  margin-top: 18px;
+  background: #211f15;
+}
+.academy-title { color: #e7d494; }
+.staff-section .unit-heading {
+  background: #3b3022;
+}
+.transfer-box {
+  border-top: 1px solid #365040;
+  padding-top: 12px;
+  margin-top: 12px;
 }
 </style>
 </head>
@@ -255,7 +270,6 @@ button:disabled { opacity: .5; }
 <script>
 "use strict";
 
-/* Подразделения, участвующие в проверках */
 const U = [
   "Delta Force",
   "Military Police",
@@ -263,14 +277,17 @@ const U = [
   "Sloppy Division"
 ];
 
+const GENERAL_STAFF = "General Staff";
+const ALL_UNITS = [...U, GENERAL_STAFF];
+
 const UNIT_CODES = {
   "Delta Force": "DF",
   "Military Police": "MP",
   "Military Academy": "MA",
-  "Sloppy Division": "SP"
+  "Sloppy Division": "SP",
+  "General Staff": "GEN"
 };
 
-/* Иерархия званий NOVA RP: от высшего к низшему */
 const RANKS = [
   "Генерал Армии",
   "Генерал-лейтенант",
@@ -325,45 +342,52 @@ let poll = null;
 let personnelSearch = "";
 
 const guest = () => !session;
+
 const admin = () =>
   ["general", "commandant"].includes(profile?.role);
 
-const can = u => admin() ||
+const can = u =>
+  admin() ||
   (profile?.role === "commander" && profile.unit === u);
 
-const units = () => admin() ? U :
+const units = () =>
+  admin() ? U :
   profile?.role === "commander" && U.includes(profile.unit)
-    ? [profile.unit] : [];
+    ? [profile.unit]
+    : [];
 
-/* Приводим написание звания к единому виду */
+const editableUnits = () =>
+  admin() ? ALL_UNITS : units();
+
+const canTransferAcademy = () =>
+  admin() ||
+  (
+    profile?.role === "commander" &&
+    profile.unit === "Military Academy"
+  );
+
 function normalizeRank(rank) {
   return String(rank ?? "")
     .trim()
     .toLowerCase()
     .replace(/ё/g, "е")
-    .replace(/[–—‑]/g, "-")
+    .replace(/[–—-]/g, "-")
     .replace(/\s+/g, " ")
     .replace(/^страрший лейтенант$/, "старший лейтенант");
 }
 
-/* Числовой приоритет звания */
 function rankPriority(rank) {
   const normalized = normalizeRank(rank);
-
   const index = RANKS.findIndex(
     r => normalizeRank(r) === normalized
   );
-
   return index === -1 ? 0 : 20 - index;
 }
 
-/* Сортировка по званию, затем по RP-нику */
 function sortPersonnel(list) {
   return [...list].sort((a, b) => {
-    const rankDifference =
-      rankPriority(b.rank) - rankPriority(a.rank);
-
-    if (rankDifference !== 0) return rankDifference;
+    const diff = rankPriority(b.rank) - rankPriority(a.rank);
+    if (diff !== 0) return diff;
 
     return String(a.name ?? "").localeCompare(
       String(b.name ?? ""),
@@ -373,10 +397,27 @@ function sortPersonnel(list) {
   });
 }
 
-function unitPersonnel(unit) {
-  return sortPersonnel(
-    personnel.filter(p => p.unit === unit)
-  );
+function isAcademy(p) {
+  return p.unit === "Military Academy" &&
+    p.subcategory === "Academy";
+}
+
+function getPersonnel(unit, subcategory = null) {
+  return sortPersonnel(personnel.filter(p => {
+    if (p.unit !== unit) return false;
+
+    if (subcategory === "Academy") return isAcademy(p);
+
+    if (subcategory === "Main") {
+      return !isAcademy(p);
+    }
+
+    return true;
+  }));
+}
+
+function count(unit, subcategory = null) {
+  return getPersonnel(unit, subcategory).length;
 }
 
 function notice(message) {
@@ -397,8 +438,6 @@ function show(name) {
 }
 
 async function request(path, options = {}) {
-  const method = options.method || "GET";
-
   const headers = {
     apikey: cfg.key,
     "Content-Type": "application/json",
@@ -410,7 +449,7 @@ async function request(path, options = {}) {
   }
 
   const response = await fetch(cfg.url + path, {
-    method,
+    method: options.method || "GET",
     headers,
     body: options.body === undefined
       ? undefined
@@ -662,11 +701,26 @@ function dashboard() {
   const c = checks.filter(x => x.date === today());
   const visibleUnits = guest() || admin() ? U : units();
 
-  const stats = U.map(u => ({
-    unit: u,
-    code: UNIT_CODES[u],
-    count: personnel.filter(p => p.unit === u).length
-  }));
+  const academyCount = count("Military Academy", "Academy");
+  const maMainCount = count("Military Academy", "Main");
+
+  const stats = [
+    ...U.map(u => ({
+      unit: u,
+      code: UNIT_CODES[u],
+      count: count(u)
+    })),
+    {
+      unit: "Academy (в составе MA)",
+      code: "ACADEMY",
+      count: academyCount
+    },
+    {
+      unit: "Генералитет",
+      code: "GEN",
+      count: count(GENERAL_STAFF)
+    }
+  ];
 
   $("#app").innerHTML = `
     <h2>Панель управления</h2>
@@ -678,8 +732,8 @@ function dashboard() {
 
     <div class="grid">
       <div class="panel">
-        <div class="muted">Подразделения</div>
-        <div class="metric">${visibleUnits.length}</div>
+        <div class="muted">Подразделения с проверками</div>
+        <div class="metric">${U.length}</div>
       </div>
 
       <div class="panel">
@@ -688,7 +742,7 @@ function dashboard() {
       </div>
 
       <div class="panel">
-        <div class="muted">В строю</div>
+        <div class="muted">В строю по докладам</div>
         <div class="metric">
           ${c.reduce(
             (a, x) => a + Number(x.present || 0),
@@ -698,7 +752,7 @@ function dashboard() {
       </div>
 
       <div class="panel">
-        <div class="muted">Всего в личном составе</div>
+        <div class="muted">Всего военнослужащих армии</div>
         <div class="metric">${personnel.length}</div>
       </div>
     </div>
@@ -716,6 +770,17 @@ function dashboard() {
       `).join("")}
     </div>
 
+    <div class="panel">
+      <h3>Military Academy</h3>
+      <p>Основной состав MA: <b>${maMainCount}</b></p>
+      <p>Курсанты Academy: <b>${academyCount}</b></p>
+      <p>Общая численность MA: <b>${count("Military Academy")}</b></p>
+      <p class="note">
+        Курсанты Academy уже включены в общую численность MA
+        и не прибавляются к численности армии повторно.
+      </p>
+    </div>
+
     <h3 style="margin-top:25px">Ежедневные проверки</h3>
 
     <div class="grid">
@@ -730,7 +795,7 @@ function dashboard() {
             </span>
             <p>
               ${x
-                ? `${Number(x.present)} / ${Number(x.total)} в строю`
+                ? `${Number(x.present)}/${Number(x.total)} в строю`
                 : "Нет доклада за сегодня"}
             </p>
           </div>
@@ -954,26 +1019,19 @@ function history() {
 
 /* Личный состав */
 function peoplePage() {
-  const available = units();
+  const available = editableUnits();
   const canEdit = available.length > 0;
-
-  const knownPersonnel = personnel.filter(p =>
-    U.includes(p.unit)
-  );
-
-  const unknownPersonnel = sortPersonnel(
-    personnel.filter(p => !U.includes(p.unit))
-  );
 
   $("#app").innerHTML = `
     <h2>Личный состав армии</h2>
 
     <div class="panel">
-      <div class="muted">Общая численность</div>
+      <div class="muted">Общая численность армии</div>
       <div class="metric">${personnel.length}</div>
       <p class="note">
-        Военнослужащие распределены по подразделениям
-        и отсортированы от старшего звания к младшему.
+        Состав распределён по подразделениям.
+        Внутри каждого раздела военнослужащие
+        отсортированы по старшинству звания.
       </p>
     </div>
 
@@ -1001,11 +1059,21 @@ function peoplePage() {
           <input name="position">
 
           <label>Подразделение</label>
-          <select name="unit">
-            ${available.map(u =>
-              `<option value="${E(u)}">${E(u)}</option>`
-            ).join("")}
+          <select name="unit" id="personUnit">
+            ${available.map(u => `
+              <option value="${E(u)}">
+                ${E(u === GENERAL_STAFF ? "Генералитет" : u)}
+              </option>
+            `).join("")}
           </select>
+
+          <div id="subcategoryBox" class="hidden">
+            <label>Категория Military Academy</label>
+            <select name="subcategory">
+              <option value="Main">Основной состав MA</option>
+              <option value="Academy">Academy (курсанты)</option>
+            </select>
+          </div>
 
           <button class="btn">Сохранить</button>
           <button class="btn secondary" type="reset">
@@ -1031,7 +1099,26 @@ function peoplePage() {
 
   const f = $("#personForm");
 
+  function updateSubcategoryBox() {
+    if (!f) return;
+
+    const isMA = f.elements.unit.value === "Military Academy";
+
+    $("#subcategoryBox").classList.toggle("hidden", !isMA);
+
+    if (!isMA) {
+      f.elements.subcategory.value = "Main";
+    }
+  }
+
   if (f) {
+    $("#personUnit").onchange = updateSubcategoryBox;
+    updateSubcategoryBox();
+
+    f.onreset = () => {
+      setTimeout(updateSubcategoryBox, 0);
+    };
+
     f.onsubmit = async e => {
       e.preventDefault();
 
@@ -1044,13 +1131,20 @@ function peoplePage() {
         return;
       }
 
+      if (data.unit !== "Military Academy") {
+        data.subcategory = "Main";
+      }
+
       try {
         if (id) {
           const old = personnel.find(
             p => String(p.id) === id
           );
 
-          if (!old || !can(old.unit)) return;
+          if (!old || !can(old.unit)) {
+            notice("Недостаточно прав на изменение");
+            return;
+          }
 
           await request(
             "/rest/v1/personnel?id=eq." +
@@ -1084,7 +1178,8 @@ function peoplePage() {
       p.name,
       p.rank,
       p.position,
-      p.unit
+      p.unit,
+      p.subcategory
     ].some(v =>
       String(v ?? "").toLowerCase().includes(q)
     );
@@ -1092,11 +1187,14 @@ function peoplePage() {
 
   function personCard(p) {
     const priority = rankPriority(p.rank);
+    const academy = isAcademy(p);
 
     return `
       <div class="person-card">
         <span class="rank-label">
-          ${priority > 0 ? `Звание №${priority}` : "Звание не распознано"}
+          ${priority > 0
+            ? `Звание №${priority}`
+            : "Звание не распознано"}
         </span>
 
         <h3>${E(p.name)}</h3>
@@ -1104,81 +1202,137 @@ function peoplePage() {
         <p><b>Звание:</b> ${E(p.rank || "Не указано")}</p>
         <p><b>Должность:</b> ${E(p.position || "Не указана")}</p>
 
-        ${can(p.unit) ? `
-          <div class="actions">
-            <button class="btn secondary"
-              data-edit="${E(p.id)}">
-              Изменить
-            </button>
+        ${academy ? `
+          <p><span class="badge">Курсант Academy</span></p>
+        ` : ""}
 
-            <button class="btn danger"
-              data-delete="${E(p.id)}">
-              Удалить
-            </button>
+        ${(can(p.unit) || (academy && canTransferAcademy())) ? `
+          <div class="actions">
+            ${can(p.unit) ? `
+              <button class="btn secondary"
+                data-edit="${E(p.id)}">
+                Изменить
+              </button>
+
+              <button class="btn danger"
+                data-delete="${E(p.id)}">
+                Удалить
+              </button>
+            ` : ""}
+
+            ${academy && canTransferAcademy() ? `
+              <button class="btn"
+                data-transfer="${E(p.id)}">
+                Перевести
+              </button>
+            ` : ""}
           </div>
         ` : ""}
       </div>
     `;
   }
 
-  function drawSections() {
-    const sections = U.map(u => {
-      const all = unitPersonnel(u);
-      const filtered = all.filter(matchesSearch);
+  function section(unit, list, title, code, extraClass = "") {
+    const filtered = list.filter(matchesSearch);
 
-      return `
-        <details class="unit-section" open>
-          <summary class="unit-heading">
-            <div>
-              <div class="unit-code">${E(UNIT_CODES[u])}</div>
-              <h3>${E(u)}</h3>
-            </div>
-            <span class="badge">
-              ${all.length} чел.
-            </span>
-          </summary>
-
-          <div class="unit-body">
-            <div class="grid">
-              ${filtered.map(personCard).join("") ||
-                '<div class="empty-state">Нет военнослужащих</div>'}
-            </div>
-          </div>
-        </details>
-      `;
-    }).join("");
-
-    const other = unknownPersonnel.length ? `
-      <details class="unit-section" open>
+    return `
+      <details class="unit-section ${extraClass}" open>
         <summary class="unit-heading">
           <div>
-            <div class="unit-code">OTHER</div>
-            <h3>Не распределены</h3>
+            <div class="unit-code">${E(code)}</div>
+            <h3>${E(title)}</h3>
           </div>
-          <span class="badge">
-            ${unknownPersonnel.length} чел.
-          </span>
+
+          <span class="badge">${list.length} чел.</span>
         </summary>
 
         <div class="unit-body">
-          <p class="note">
-            Здесь находятся записи с неизвестным
-            или неуказанным подразделением.
-          </p>
-
           <div class="grid">
-            ${unknownPersonnel
-              .filter(matchesSearch)
-              .map(personCard)
-              .join("") ||
-              '<div class="empty-state">Нет совпадений</div>'}
+            ${filtered.map(personCard).join("") ||
+              '<div class="empty-state">Нет военнослужащих</div>'}
           </div>
         </div>
       </details>
-    ` : "";
+    `;
+  }
 
-    $("#personnelSections").innerHTML =
-      sections + other;
+  function drawSections() {
+    let html = "";
+
+    for (const unit of U) {
+      if (unit === "Military Academy") {
+        const main = getPersonnel(unit, "Main");
+        const academy = getPersonnel(unit, "Academy");
+
+        html += `
+          <details class="unit-section" open>
+            <summary class="unit-heading">
+              <div>
+                <div class="unit-code">MA</div>
+                <h3>Military Academy</h3>
+              </div>
+              <span class="badge">${count(unit)} чел.</span>
+            </summary>
+
+            <div class="unit-body">
+              <h3>Основной состав MA — ${main.length} чел.</h3>
+
+              <div class="grid">
+                ${main.filter(matchesSearch).map(personCard).join("") ||
+                  '<div class="empty-state">Нет военнослужащих</div>'}
+              </div>
+
+              <div class="academy-section">
+                <h3 class="academy-title">
+                  🎓 Academy — ${academy.length} чел.
+                </h3>
+
+                <p class="note">
+                  Курсанты находятся в составе MA.
+                  После обучения их можно перевести
+                  в DF, MP, SP или основной состав MA.
+                </p>
+
+                <div class="grid">
+                  ${academy.filter(matchesSearch).map(personCard).join("") ||
+                    '<div class="empty-state">Нет курсантов</div>'}
+                </div>
+              </div>
+            </div>
+          </details>
+        `;
+      } else {
+        html += section(
+          unit,
+          getPersonnel(unit),
+          unit,
+          UNIT_CODES[unit]
+        );
+      }
+    }
+
+    html += section(
+      GENERAL_STAFF,
+      getPersonnel(GENERAL_STAFF),
+      "Генералитет",
+      "GEN · GENERAL STAFF",
+      "staff-section"
+    );
+
+    const unknown = sortPersonnel(
+      personnel.filter(p => !ALL_UNITS.includes(p.unit))
+    );
+
+    if (unknown.length) {
+      html += section(
+        "unknown",
+        unknown,
+        "Не распределены",
+        "OTHER"
+      );
+    }
+
+    $("#personnelSections").innerHTML = html;
   }
 
   drawSections();
@@ -1189,23 +1343,33 @@ function peoplePage() {
   };
 
   $("#personnelSections").onclick = async e => {
-    const b = e.target.closest("[data-edit],[data-delete]");
-    if (!b) return;
-
-    const id = b.dataset.edit || b.dataset.delete;
-
-    const p = personnel.find(
-      x => String(x.id) === id
+    const b = e.target.closest(
+      "[data-edit],[data-delete],[data-transfer]"
     );
 
-    if (!p || !can(p.unit)) return;
+    if (!b) return;
+
+    const id =
+      b.dataset.edit ||
+      b.dataset.delete ||
+      b.dataset.transfer;
+
+    const p = personnel.find(x => String(x.id) === id);
+    if (!p) return;
 
     if (b.dataset.edit && f) {
+      if (!can(p.unit)) return;
+
       for (const k of [
         "id", "name", "position", "unit"
       ]) {
         f.elements[k].value = p[k] ?? "";
       }
+
+      updateSubcategoryBox();
+
+      f.elements.subcategory.value =
+        p.subcategory === "Academy" ? "Academy" : "Main";
 
       const rankSelect = f.elements.rank;
       const savedRank = String(p.rank ?? "");
@@ -1227,12 +1391,14 @@ function peoplePage() {
       }
 
       f.scrollIntoView({ behavior: "smooth" });
+      return;
     }
 
-    if (
-      b.dataset.delete &&
-      confirm("Удалить военнослужащего?")
-    ) {
+    if (b.dataset.delete) {
+      if (!can(p.unit)) return;
+
+      if (!confirm("Удалить военнослужащего?")) return;
+
       try {
         await request(
           "/rest/v1/personnel?id=eq." +
@@ -1240,9 +1406,59 @@ function peoplePage() {
           { method: "DELETE" }
         );
 
+        notice("Военнослужащий удалён");
         await loadData();
       } catch (err) {
         notice(err.message);
+      }
+
+      return;
+    }
+
+    if (b.dataset.transfer) {
+      if (!isAcademy(p) || !canTransferAcademy()) return;
+
+      const options = [
+        ["1", "Delta Force"],
+        ["2", "Military Police"],
+        ["3", "Sloppy Division"],
+        ["4", "Military Academy"]
+      ];
+
+      const choice = prompt(
+        `Перевод курсанта ${p.name}\n\n` +
+        "Выберите новое подразделение:\n" +
+        options.map(x => x[0] + " — " + x[1]).join("\n") +
+        "\n\nВведите номер от 1 до 4:"
+      );
+
+      if (choice === null) return;
+
+      const target = options.find(x => x[0] === choice.trim());
+
+      if (!target) {
+        notice("Неверное подразделение");
+        return;
+      }
+
+      if (!confirm(
+        `Перевести ${p.name} в ${target[1]}?\n\n` +
+        "Звание и должность останутся без изменений."
+      )) return;
+
+      try {
+        await request("/rest/v1/rpc/transfer_academy", {
+          method: "POST",
+          body: {
+            p_person_id: p.id,
+            p_target_unit: target[1]
+          }
+        });
+
+        notice("Курсант успешно переведён");
+        await loadData();
+      } catch (err) {
+        notice("Ошибка перевода: " + err.message);
       }
     }
   };
