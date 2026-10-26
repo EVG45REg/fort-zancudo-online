@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -65,7 +66,11 @@ label { font-size: 14px; color: #bfd2c2; }
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 12px;
 }
-.metric { font-size: 34px; color: #b5d9a8; font-weight: 700; }
+.metric {
+  font-size: 34px;
+  color: #b5d9a8;
+  font-weight: 700;
+}
 .nav {
   display: flex;
   gap: 6px;
@@ -85,7 +90,11 @@ label { font-size: 14px; color: #bfd2c2; }
 .hidden { display: none !important; }
 .error { color: #ffaaa4; }
 .table { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; min-width: 550px; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 550px;
+}
 td, th {
   text-align: left;
   padding: 10px;
@@ -120,8 +129,72 @@ td, th {
   padding: 17px;
 }
 .person-card p { margin: 8px 0; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
 button:disabled { opacity: .5; }
+
+/* Новое оформление личного состава */
+.unit-section {
+  margin: 18px 0;
+  border: 1px solid #365040;
+  border-radius: 15px;
+  overflow: hidden;
+  background: #101d16;
+}
+.unit-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px;
+  background: #203629;
+  cursor: pointer;
+}
+.unit-heading h3 { margin: 0; }
+.unit-heading .badge { white-space: nowrap; }
+.unit-body { padding: 14px; }
+.rank-label {
+  display: inline-block;
+  color: #b5d9a8;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.unit-code {
+  color: #a8c2ae;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.summary-card {
+  background: #16241d;
+  border: 1px solid #365040;
+  border-radius: 14px;
+  padding: 17px;
+}
+.summary-card strong {
+  display: block;
+  font-size: 30px;
+  color: #b5d9a8;
+  margin-top: 8px;
+}
+.personnel-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 15px 0;
+}
+.personnel-toolbar input {
+  flex: 1;
+  min-width: 180px;
+  margin: 0;
+}
+.empty-state {
+  color: #abc0af;
+  padding: 15px;
+}
 </style>
 </head>
 
@@ -182,11 +255,43 @@ button:disabled { opacity: .5; }
 <script>
 "use strict";
 
+/* Подразделения, участвующие в проверках */
 const U = [
   "Delta Force",
   "Military Police",
   "Military Academy",
   "Sloppy Division"
+];
+
+const UNIT_CODES = {
+  "Delta Force": "DF",
+  "Military Police": "MP",
+  "Military Academy": "MA",
+  "Sloppy Division": "SP"
+};
+
+/* Иерархия званий NOVA RP: от высшего к низшему */
+const RANKS = [
+  "Генерал Армии",
+  "Генерал-лейтенант",
+  "Генерал-майор",
+  "Бригадный генерал",
+  "Полковник",
+  "Подполковник",
+  "Майор",
+  "Капитан",
+  "Старший лейтенант",
+  "Лейтенант",
+  "Команд-сержант-майор",
+  "Первый сержант",
+  "Сержант первого класса",
+  "Штаб-сержант",
+  "Сержант",
+  "Капрал",
+  "Специалист",
+  "Рядовой первого класса",
+  "Рядовой",
+  "Рекрут"
 ];
 
 const $ = s => document.querySelector(s);
@@ -217,21 +322,72 @@ let checks = [];
 let personnel = [];
 let profiles = [];
 let poll = null;
+let personnelSearch = "";
 
 const guest = () => !session;
-const admin = () => ["general", "commandant"].includes(profile?.role);
+const admin = () =>
+  ["general", "commandant"].includes(profile?.role);
+
 const can = u => admin() ||
   (profile?.role === "commander" && profile.unit === u);
+
 const units = () => admin() ? U :
   profile?.role === "commander" && U.includes(profile.unit)
     ? [profile.unit] : [];
+
+/* Приводим написание звания к единому виду */
+function normalizeRank(rank) {
+  return String(rank ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[–—‑]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/^страрший лейтенант$/, "старший лейтенант");
+}
+
+/* Числовой приоритет звания */
+function rankPriority(rank) {
+  const normalized = normalizeRank(rank);
+
+  const index = RANKS.findIndex(
+    r => normalizeRank(r) === normalized
+  );
+
+  return index === -1 ? 0 : 20 - index;
+}
+
+/* Сортировка по званию, затем по RP-нику */
+function sortPersonnel(list) {
+  return [...list].sort((a, b) => {
+    const rankDifference =
+      rankPriority(b.rank) - rankPriority(a.rank);
+
+    if (rankDifference !== 0) return rankDifference;
+
+    return String(a.name ?? "").localeCompare(
+      String(b.name ?? ""),
+      "ru",
+      { sensitivity: "base" }
+    );
+  });
+}
+
+function unitPersonnel(unit) {
+  return sortPersonnel(
+    personnel.filter(p => p.unit === unit)
+  );
+}
 
 function notice(message) {
   const n = $("#notice");
   n.textContent = message;
   n.style.display = "block";
   clearTimeout(notice.timer);
-  notice.timer = setTimeout(() => n.style.display = "none", 4000);
+  notice.timer = setTimeout(
+    () => n.style.display = "none",
+    4000
+  );
 }
 
 function show(name) {
@@ -242,6 +398,7 @@ function show(name) {
 
 async function request(path, options = {}) {
   const method = options.method || "GET";
+
   const headers = {
     apikey: cfg.key,
     "Content-Type": "application/json",
@@ -256,23 +413,30 @@ async function request(path, options = {}) {
     method,
     headers,
     body: options.body === undefined
-      ? undefined : JSON.stringify(options.body)
+      ? undefined
+      : JSON.stringify(options.body)
   });
 
   const text = await response.text();
   let data = null;
 
   if (text) {
-    try { data = JSON.parse(text); }
-    catch { data = text; }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
   }
 
   if (!response.ok) {
     throw new Error(
-      data?.message || data?.error_description ||
-      data?.error || "HTTP " + response.status
+      data?.message ||
+      data?.error_description ||
+      data?.error ||
+      "HTTP " + response.status
     );
   }
+
   return data;
 }
 
@@ -281,12 +445,17 @@ const table = (name, query = "") =>
 
 async function refreshToken() {
   if (!session?.refresh_token) return false;
+
   try {
-    const s = await request("/auth/v1/token?grant_type=refresh_token", {
-      method: "POST",
-      auth: false,
-      body: { refresh_token: session.refresh_token }
-    });
+    const s = await request(
+      "/auth/v1/token?grant_type=refresh_token",
+      {
+        method: "POST",
+        auth: false,
+        body: { refresh_token: session.refresh_token }
+      }
+    );
+
     session = s;
     localStorage.setItem("fz_session", JSON.stringify(s));
     return true;
@@ -332,15 +501,20 @@ async function loadData(redraw = true) {
         table("checks", "select=*&order=date.desc"),
         table("personnel", "select=*&order=name.asc")
       ]);
+
       checks = c || [];
       personnel = p || [];
       profile = null;
       profiles = [];
+
       $("#identity").textContent = "Гость · просмотр";
     } else {
       const [p, c, people] = await Promise.all([
-        table("profiles",
-          "select=*&id=eq." + encodeURIComponent(session.user.id)),
+        table(
+          "profiles",
+          "select=*&id=eq." +
+          encodeURIComponent(session.user.id)
+        ),
         table("checks", "select=*&order=date.desc"),
         table("personnel", "select=*&order=name.asc")
       ]);
@@ -355,7 +529,10 @@ async function loadData(redraw = true) {
       personnel = people || [];
 
       profiles = admin()
-        ? await table("profiles", "select=*&order=display_name.asc")
+        ? await table(
+            "profiles",
+            "select=*&order=display_name.asc"
+          )
         : [];
 
       $("#identity").textContent =
@@ -390,13 +567,20 @@ async function start() {
 
 function startPolling() {
   clearInterval(poll);
+
   poll = setInterval(async () => {
-    if (session &&
-        Date.now() / 1000 > (session.expires_at || 0) - 90) {
+    if (
+      session &&
+      Date.now() / 1000 >
+        (session.expires_at || 0) - 90
+    ) {
       await refreshToken();
     }
-    await loadData(!["checks", "personnel", "reports", "accounts"]
-      .includes(page));
+
+    await loadData(
+      !["checks", "personnel", "reports", "accounts"]
+        .includes(page)
+    );
   }, 15000);
 }
 
@@ -405,24 +589,29 @@ $("#loginForm").onsubmit = async e => {
   $("#loginError").textContent = "";
 
   try {
-    const s = await request("/auth/v1/token?grant_type=password", {
-      method: "POST",
-      auth: false,
-      body: {
-        email: $("#email").value.trim(),
-        password: $("#password").value
+    const s = await request(
+      "/auth/v1/token?grant_type=password",
+      {
+        method: "POST",
+        auth: false,
+        body: {
+          email: $("#email").value.trim(),
+          password: $("#password").value
+        }
       }
-    });
+    );
 
     session = s;
     localStorage.setItem("fz_session", JSON.stringify(s));
     $("#password").value = "";
     page = "dashboard";
+
     show("system");
     await loadData();
     startPolling();
   } catch (err) {
-    $("#loginError").textContent = "Ошибка входа: " + err.message;
+    $("#loginError").textContent =
+      "Ошибка входа: " + err.message;
   }
 };
 
@@ -468,12 +657,20 @@ function render() {
   if (page === "accounts") accounts();
 }
 
+/* Главная страница */
 function dashboard() {
   const c = checks.filter(x => x.date === today());
   const visibleUnits = guest() || admin() ? U : units();
 
+  const stats = U.map(u => ({
+    unit: u,
+    code: UNIT_CODES[u],
+    count: personnel.filter(p => p.unit === u).length
+  }));
+
   $("#app").innerHTML = `
     <h2>Панель управления</h2>
+
     <p class="muted">
       ${E(today())} · ${E(profile?.display_name || "Гость")}
       · синхронизация каждые 15 секунд
@@ -484,52 +681,79 @@ function dashboard() {
         <div class="muted">Подразделения</div>
         <div class="metric">${visibleUnits.length}</div>
       </div>
+
       <div class="panel">
         <div class="muted">Проверено сегодня</div>
         <div class="metric">${c.length}</div>
       </div>
+
       <div class="panel">
         <div class="muted">В строю</div>
         <div class="metric">
-          ${c.reduce((a, x) => a + Number(x.present || 0), 0)}
+          ${c.reduce(
+            (a, x) => a + Number(x.present || 0),
+            0
+          )}
         </div>
       </div>
+
       <div class="panel">
-        <div class="muted">Личный состав</div>
+        <div class="muted">Всего в личном составе</div>
         <div class="metric">${personnel.length}</div>
       </div>
     </div>
 
-    <h3>Подразделения</h3>
+    <h3>Численность подразделений</h3>
+
+    <div class="grid">
+      ${stats.map(s => `
+        <div class="summary-card">
+          <div class="unit-code">${E(s.code)}</div>
+          <div>${E(s.unit)}</div>
+          <strong>${s.count}</strong>
+          <small>военнослужащих</small>
+        </div>
+      `).join("")}
+    </div>
+
+    <h3 style="margin-top:25px">Ежедневные проверки</h3>
+
     <div class="grid">
       ${visibleUnits.map(u => {
         const x = c.find(v => v.unit === u);
+
         return `
           <div class="panel">
             <h3>${E(u)}</h3>
             <span class="badge">
               ${E(x?.status || "Не проверено")}
             </span>
-            <p>${x
-              ? `${x.present} / ${x.total} в строю`
-              : "Нет доклада за сегодня"}</p>
-          </div>`;
+            <p>
+              ${x
+                ? `${Number(x.present)} / ${Number(x.total)} в строю`
+                : "Нет доклада за сегодня"}
+            </p>
+          </div>
+        `;
       }).join("")}
     </div>
   `;
 }
 
 async function upsert(name, obj, conflict) {
-  return request("/rest/v1/" + name +
-    "?on_conflict=" + conflict, {
-    method: "POST",
-    body: obj,
-    headers: {
-      Prefer: "resolution=merge-duplicates,return=representation"
+  return request(
+    "/rest/v1/" + name + "?on_conflict=" + conflict,
+    {
+      method: "POST",
+      body: obj,
+      headers: {
+        Prefer: "resolution=merge-duplicates,return=representation"
+      }
     }
-  });
+  );
 }
 
+/* Проверки */
 function checkForm() {
   const available = units();
 
@@ -541,13 +765,16 @@ function checkForm() {
 
   $("#app").innerHTML = `
     <h2>Ежедневная проверка</h2>
+
     <div class="panel">
       <label>Дата</label>
       <input id="date" type="date" value="${today()}">
 
       <label>Подразделение</label>
       <select id="unit">
-        ${available.map(u => `<option>${E(u)}</option>`).join("")}
+        ${available.map(u =>
+          `<option>${E(u)}</option>`
+        ).join("")}
       </select>
 
       <form id="checkForm">
@@ -556,6 +783,7 @@ function checkForm() {
             <label>Всего</label>
             <input name="total" type="number" min="0" required>
           </div>
+
           <div>
             <label>В строю</label>
             <input name="present" type="number" min="0" required>
@@ -594,7 +822,8 @@ function checkForm() {
     );
 
     for (const k of [
-      "total", "present", "status", "work", "issues", "tasks"
+      "total", "present", "status",
+      "work", "issues", "tasks"
     ]) {
       f.elements[k].value = c?.[k] ??
         (k === "status" ? "Без замечаний" : "");
@@ -635,6 +864,7 @@ function checkForm() {
   };
 }
 
+/* История проверок */
 function history() {
   const rows = [...checks].sort((a, b) =>
     b.date.localeCompare(a.date)
@@ -642,6 +872,7 @@ function history() {
 
   $("#app").innerHTML = `
     <h2>История проверок</h2>
+
     <div class="panel table">
       <table>
         <thead>
@@ -653,6 +884,7 @@ function history() {
             <th>Действия</th>
           </tr>
         </thead>
+
         <tbody>
           ${rows.map(c => `
             <tr>
@@ -661,17 +893,21 @@ function history() {
               <td>${Number(c.present)}/${Number(c.total)}</td>
               <td>${E(c.status)}</td>
               <td>
-                <button class="btn secondary" data-view="${E(c.id)}">
+                <button class="btn secondary"
+                  data-view="${E(c.id)}">
                   Открыть
                 </button>
+
                 ${can(c.unit) ? `
-                  <button class="btn danger" data-delete="${E(c.id)}">
+                  <button class="btn danger"
+                    data-delete="${E(c.id)}">
                     Удалить
-                  </button>` : ""}
+                  </button>
+                ` : ""}
               </td>
             </tr>
           `).join("") ||
-          '<tr><td colspan="5">Записей нет</td></tr>'}
+            '<tr><td colspan="5">Записей нет</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -684,6 +920,7 @@ function history() {
     const c = checks.find(x =>
       String(x.id) === (b.dataset.view || b.dataset.delete)
     );
+
     if (!c) return;
 
     if (b.dataset.view) {
@@ -702,8 +939,11 @@ function history() {
 
     if (confirm("Удалить проверку?")) {
       try {
-        await request("/rest/v1/checks?id=eq." +
-          encodeURIComponent(c.id), { method: "DELETE" });
+        await request(
+          "/rest/v1/checks?id=eq." +
+          encodeURIComponent(c.id),
+          { method: "DELETE" }
+        );
         await loadData();
       } catch (err) {
         notice(err.message);
@@ -712,16 +952,35 @@ function history() {
   };
 }
 
+/* Личный состав */
 function peoplePage() {
   const available = units();
   const canEdit = available.length > 0;
 
+  const knownPersonnel = personnel.filter(p =>
+    U.includes(p.unit)
+  );
+
+  const unknownPersonnel = sortPersonnel(
+    personnel.filter(p => !U.includes(p.unit))
+  );
+
   $("#app").innerHTML = `
-    <h2>Личный состав</h2>
+    <h2>Личный состав армии</h2>
+
+    <div class="panel">
+      <div class="muted">Общая численность</div>
+      <div class="metric">${personnel.length}</div>
+      <p class="note">
+        Военнослужащие распределены по подразделениям
+        и отсортированы от старшего звания к младшему.
+      </p>
+    </div>
 
     ${canEdit ? `
       <div class="panel">
         <h3>Добавить / изменить военнослужащего</h3>
+
         <form id="personForm">
           <input type="hidden" name="id">
 
@@ -729,7 +988,14 @@ function peoplePage() {
           <input name="name" maxlength="100" required>
 
           <label>Звание</label>
-          <input name="rank">
+          <select name="rank">
+            <option value="">Выберите звание</option>
+            ${RANKS.map((r, i) => `
+              <option value="${E(r)}">
+                ${20 - i}. ${E(r)}
+              </option>
+            `).join("")}
+          </select>
 
           <label>Должность</label>
           <input name="position">
@@ -737,7 +1003,8 @@ function peoplePage() {
           <label>Подразделение</label>
           <select name="unit">
             ${available.map(u =>
-              `<option>${E(u)}</option>`).join("")}
+              `<option value="${E(u)}">${E(u)}</option>`
+            ).join("")}
           </select>
 
           <button class="btn">Сохранить</button>
@@ -745,30 +1012,21 @@ function peoplePage() {
             Очистить
           </button>
         </form>
-      </div>` : `
+      </div>
+    ` : `
       <p class="muted">Публичный список военнослужащих</p>
     `}
 
-    <div class="grid">
-      ${personnel.map(p => `
-        <div class="person-card">
-          <h3>${E(p.name)}</h3>
-          <p><b>Звание:</b> ${E(p.rank)}</p>
-          <p><b>Должность:</b> ${E(p.position)}</p>
-          <p><b>Подразделение:</b> ${E(p.unit)}</p>
-
-          ${can(p.unit) ? `
-            <div class="actions">
-              <button class="btn secondary" data-edit="${E(p.id)}">
-                Изменить
-              </button>
-              <button class="btn danger" data-delete="${E(p.id)}">
-                Удалить
-              </button>
-            </div>` : ""}
-        </div>
-      `).join("") || '<div class="panel">Нет записей</div>'}
+    <div class="personnel-toolbar">
+      <input
+        id="personSearch"
+        type="search"
+        placeholder="Поиск по RP-нику, званию, должности"
+        value="${E(personnelSearch)}"
+      >
     </div>
+
+    <div id="personnelSections"></div>
   `;
 
   const f = $("#personForm");
@@ -788,14 +1046,20 @@ function peoplePage() {
 
       try {
         if (id) {
-          const old = personnel.find(p => String(p.id) === id);
+          const old = personnel.find(
+            p => String(p.id) === id
+          );
+
           if (!old || !can(old.unit)) return;
 
-          await request("/rest/v1/personnel?id=eq." +
-            encodeURIComponent(id), {
-            method: "PATCH",
-            body: data
-          });
+          await request(
+            "/rest/v1/personnel?id=eq." +
+            encodeURIComponent(id),
+            {
+              method: "PATCH",
+              body: data
+            }
+          );
         } else {
           await request("/rest/v1/personnel", {
             method: "POST",
@@ -811,25 +1075,171 @@ function peoplePage() {
     };
   }
 
-  $("#app").onclick = async e => {
+  function matchesSearch(p) {
+    const q = personnelSearch.trim().toLowerCase();
+
+    if (!q) return true;
+
+    return [
+      p.name,
+      p.rank,
+      p.position,
+      p.unit
+    ].some(v =>
+      String(v ?? "").toLowerCase().includes(q)
+    );
+  }
+
+  function personCard(p) {
+    const priority = rankPriority(p.rank);
+
+    return `
+      <div class="person-card">
+        <span class="rank-label">
+          ${priority > 0 ? `Звание №${priority}` : "Звание не распознано"}
+        </span>
+
+        <h3>${E(p.name)}</h3>
+
+        <p><b>Звание:</b> ${E(p.rank || "Не указано")}</p>
+        <p><b>Должность:</b> ${E(p.position || "Не указана")}</p>
+
+        ${can(p.unit) ? `
+          <div class="actions">
+            <button class="btn secondary"
+              data-edit="${E(p.id)}">
+              Изменить
+            </button>
+
+            <button class="btn danger"
+              data-delete="${E(p.id)}">
+              Удалить
+            </button>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
+  function drawSections() {
+    const sections = U.map(u => {
+      const all = unitPersonnel(u);
+      const filtered = all.filter(matchesSearch);
+
+      return `
+        <details class="unit-section" open>
+          <summary class="unit-heading">
+            <div>
+              <div class="unit-code">${E(UNIT_CODES[u])}</div>
+              <h3>${E(u)}</h3>
+            </div>
+            <span class="badge">
+              ${all.length} чел.
+            </span>
+          </summary>
+
+          <div class="unit-body">
+            <div class="grid">
+              ${filtered.map(personCard).join("") ||
+                '<div class="empty-state">Нет военнослужащих</div>'}
+            </div>
+          </div>
+        </details>
+      `;
+    }).join("");
+
+    const other = unknownPersonnel.length ? `
+      <details class="unit-section" open>
+        <summary class="unit-heading">
+          <div>
+            <div class="unit-code">OTHER</div>
+            <h3>Не распределены</h3>
+          </div>
+          <span class="badge">
+            ${unknownPersonnel.length} чел.
+          </span>
+        </summary>
+
+        <div class="unit-body">
+          <p class="note">
+            Здесь находятся записи с неизвестным
+            или неуказанным подразделением.
+          </p>
+
+          <div class="grid">
+            ${unknownPersonnel
+              .filter(matchesSearch)
+              .map(personCard)
+              .join("") ||
+              '<div class="empty-state">Нет совпадений</div>'}
+          </div>
+        </div>
+      </details>
+    ` : "";
+
+    $("#personnelSections").innerHTML =
+      sections + other;
+  }
+
+  drawSections();
+
+  $("#personSearch").oninput = e => {
+    personnelSearch = e.target.value;
+    drawSections();
+  };
+
+  $("#personnelSections").onclick = async e => {
     const b = e.target.closest("[data-edit],[data-delete]");
     if (!b) return;
 
     const id = b.dataset.edit || b.dataset.delete;
-    const p = personnel.find(x => String(x.id) === id);
+
+    const p = personnel.find(
+      x => String(x.id) === id
+    );
+
     if (!p || !can(p.unit)) return;
 
     if (b.dataset.edit && f) {
-      for (const k of ["id", "name", "rank", "position", "unit"]) {
+      for (const k of [
+        "id", "name", "position", "unit"
+      ]) {
         f.elements[k].value = p[k] ?? "";
       }
+
+      const rankSelect = f.elements.rank;
+      const savedRank = String(p.rank ?? "");
+
+      const knownRank = RANKS.find(
+        r => normalizeRank(r) === normalizeRank(savedRank)
+      );
+
+      if (knownRank) {
+        rankSelect.value = knownRank;
+      } else if (savedRank) {
+        const option = document.createElement("option");
+        option.value = savedRank;
+        option.textContent = savedRank + " (текущее звание)";
+        rankSelect.appendChild(option);
+        rankSelect.value = savedRank;
+      } else {
+        rankSelect.value = "";
+      }
+
       f.scrollIntoView({ behavior: "smooth" });
     }
 
-    if (b.dataset.delete && confirm("Удалить военнослужащего?")) {
+    if (
+      b.dataset.delete &&
+      confirm("Удалить военнослужащего?")
+    ) {
       try {
-        await request("/rest/v1/personnel?id=eq." +
-          encodeURIComponent(p.id), { method: "DELETE" });
+        await request(
+          "/rest/v1/personnel?id=eq." +
+          encodeURIComponent(p.id),
+          { method: "DELETE" }
+        );
+
         await loadData();
       } catch (err) {
         notice(err.message);
@@ -838,6 +1248,7 @@ function peoplePage() {
   };
 }
 
+/* Discord */
 function reportText(date) {
   const items = checks.filter(x => x.date === date);
 
@@ -847,6 +1258,7 @@ function reportText(date) {
 
 ` + (admin() ? U : units()).map(u => {
     const c = items.find(x => x.unit === u);
+
     return `**${u}**
 ${c ? `Явка: ${c.present}/${c.total}
 Состояние: ${c.status}
@@ -866,22 +1278,36 @@ function reports() {
 
   $("#app").innerHTML = `
     <h2>Доклад для Discord</h2>
+
     <div class="panel">
       <label>Дата</label>
       <input type="date" id="reportDate" value="${today()}">
+
       <label>Текст доклада</label>
-      <textarea id="report" style="min-height:350px"></textarea>
-      <button class="btn" id="copy">Скопировать</button>
+      <textarea
+        id="report"
+        style="min-height:350px"
+      ></textarea>
+
+      <button class="btn" id="copy">
+        Скопировать
+      </button>
     </div>
   `;
 
   const d = $("#reportDate");
-  d.onchange = () => $("#report").value = reportText(d.value);
+
+  d.onchange = () =>
+    $("#report").value = reportText(d.value);
+
   d.onchange();
 
   $("#copy").onclick = async () => {
     try {
-      await navigator.clipboard.writeText($("#report").value);
+      await navigator.clipboard.writeText(
+        $("#report").value
+      );
+
       notice("Доклад скопирован");
     } catch {
       $("#report").select();
@@ -890,6 +1316,7 @@ function reports() {
   };
 }
 
+/* Управление доступами */
 function accounts() {
   if (!admin()) {
     $("#app").innerHTML = "<h2>Нет доступа</h2>";
@@ -898,8 +1325,10 @@ function accounts() {
 
   $("#app").innerHTML = `
     <h2>Управление ролями</h2>
+
     <p class="note">
-      Учётные записи создаются через Supabase Authentication.
+      Учётные записи создаются через
+      Supabase Authentication.
     </p>
 
     <div class="panel table">
@@ -912,32 +1341,56 @@ function accounts() {
             <th>Действие</th>
           </tr>
         </thead>
+
         <tbody>
           ${profiles.map(p => `
             <tr>
               <td>
-                <input data-id="${E(p.id)}"
+                <input
+                  data-id="${E(p.id)}"
                   data-k="display_name"
-                  value="${E(p.display_name)}">
+                  value="${E(p.display_name)}"
+                >
               </td>
+
               <td>
-                <select data-id="${E(p.id)}" data-k="role">
-                  ${["viewer", "commander", "commandant", "general"]
-                    .map(r => `<option value="${r}"
+                <select
+                  data-id="${E(p.id)}"
+                  data-k="role"
+                >
+                  ${[
+                    "viewer",
+                    "commander",
+                    "commandant",
+                    "general"
+                  ].map(r => `
+                    <option value="${r}"
                       ${r === p.role ? "selected" : ""}>
-                      ${r}</option>`).join("")}
+                      ${r}
+                    </option>
+                  `).join("")}
                 </select>
               </td>
+
               <td>
-                <select data-id="${E(p.id)}" data-k="unit">
+                <select
+                  data-id="${E(p.id)}"
+                  data-k="unit"
+                >
                   <option value="">—</option>
-                  ${U.map(u => `<option value="${E(u)}"
-                    ${u === p.unit ? "selected" : ""}>
-                    ${E(u)}</option>`).join("")}
+
+                  ${U.map(u => `
+                    <option value="${E(u)}"
+                      ${u === p.unit ? "selected" : ""}>
+                      ${E(u)}
+                    </option>
+                  `).join("")}
                 </select>
               </td>
+
               <td>
-                <button class="btn" data-save="${E(p.id)}">
+                <button class="btn"
+                  data-save="${E(p.id)}">
                   Сохранить
                 </button>
               </td>
@@ -969,11 +1422,15 @@ function accounts() {
     if (!confirm("Изменить права пользователя?")) return;
 
     try {
-      await request("/rest/v1/profiles?id=eq." +
-        encodeURIComponent(id), {
-        method: "PATCH",
-        body: vals
-      });
+      await request(
+        "/rest/v1/profiles?id=eq." +
+        encodeURIComponent(id),
+        {
+          method: "PATCH",
+          body: vals
+        }
+      );
+
       notice("Роль обновлена");
       await loadData();
     } catch (err) {
