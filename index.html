@@ -1,26 +1,360 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111b19"><link rel="manifest" href="manifest.webmanifest"><title>Fort Zancudo Online</title><style>
-:root{font-family:system-ui,Arial,sans-serif;color:#e8f0e9;background:#0b1411}*{box-sizing:border-box}body{margin:0}header{background:#16251f;border-bottom:1px solid #34493b;padding:17px;display:flex;justify-content:space-between;align-items:center;gap:8px}h1{font-size:19px;letter-spacing:1px;margin:0}h2{font-size:23px}h3{margin:0 0 10px}small,.muted{color:#abc0af}button,input,textarea,select{font:inherit}button{cursor:pointer}input,textarea,select{display:block;width:100%;padding:12px;background:#0c1913;color:#f3f8f3;border:1px solid #506657;border-radius:9px;margin:5px 0 13px}textarea{min-height:75px}label{font-size:13px;color:#bfd2c2}.btn{padding:11px 15px;background:#b0d29f;color:#132018;border:0;border-radius:9px;font-weight:700}.secondary{background:#2c4436;color:#e9f5e9}.danger{background:#633532;color:#fff}.wrap{max-width:1100px;margin:auto;padding:18px}.panel{background:#16241d;border:1px solid #365040;border-radius:14px;padding:17px;margin:14px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.metric{font-size:32px;color:#b5d9a8;font-weight:700}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.nav{display:flex;gap:6px;overflow-x:auto;padding:10px;background:#101e17}.nav button{border:0;border-radius:9px;padding:12px;background:transparent;color:#d4e7d9;white-space:nowrap}.nav .active{background:#315440}.hidden{display:none!important}.error{color:#ffaaa4;white-space:pre-wrap}.success{color:#b5e8af}.table{overflow:auto}table{width:100%;border-collapse:collapse;min-width:550px}td,th{text-align:left;padding:10px;border-bottom:1px solid #3c5142;font-size:14px}.badge{background:#304f3c;border-radius:20px;padding:5px 9px;font-size:12px}.note{font-size:13px;color:#a8c2ae}#notice{position:fixed;bottom:10px;left:10px;right:10px;max-width:600px;margin:auto;background:#3b5c44;padding:12px;border-radius:9px;display:none;z-index:10}#login{max-width:480px;margin:35px auto}.spinner{padding:25px;text-align:center}button:disabled{opacity:.45;cursor:not-allowed}
-</style></head><body><header><div><h1>▣ FORT ZANCUDO</h1><small>COMMANDANT CONTROL SYSTEM · ONLINE</small></div><span id="identity" class="badge">Вход</span></header><section id="setup" class="wrap hidden"><div class="panel"><h2>Первичная настройка</h2><p>Откройте файл <b>config.js</b> и вставьте URL проекта Supabase и <b>anon / publishable key</b>. Никогда не вставляйте service_role или secret key.</p><p class="note">После настройки опубликуйте все файлы на GitHub Pages через HTTPS.</p></div></section><section id="login" class="wrap hidden"><div class="panel"><h2>Вход в систему</h2><form id="loginForm"><label>Email (логин)</label><input id="email" type="email" required autocomplete="username" placeholder="commander@example.com"><label>Пароль</label><input id="password" type="password" required autocomplete="current-password"><button class="btn" type="submit">Войти</button></form><p id="loginError" class="error"></p><p class="note">Учётные записи создаёт администратор в Supabase. Самостоятельная регистрация отключена в интерфейсе.</p></div></section><section id="system" class="hidden"><nav class="nav" id="nav"><button data-page="dashboard" class="active">Обзор</button><button data-page="checks">Проверки</button><button data-page="history">История</button><button data-page="personnel">Личный состав</button><button data-page="reports">Discord</button><button data-page="accounts">Доступы</button><button data-page="logout">Выход</button></nav><main id="app" class="wrap"></main></section><div id="notice"></div><script src="config.js"></script><script>
-'use strict';
-const U=['Delta Force','Military Police','Military Academy','Sloppy Division'];const $=s=>document.querySelector(s);const E=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const today=()=>{let d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
-const cfg=window.FZ_CONFIG||{};let session=null,profile=null,page='dashboard',checks=[],personnel=[],profiles=[],poll=null;const admin=()=>['general','commandant'].includes(profile?.role),can=u=>admin()||(profile?.role==='commander'&&profile.unit===u);const units=()=>admin()?U:profile?.role==='commander'?[profile.unit]:[];
-const notice=s=>{let n=$('#notice');n.textContent=s;n.style.display='block';setTimeout(()=>n.style.display='none',3200)};
-function show(s){for(let k of ['setup','login','system'])$('#'+k).classList.toggle('hidden',k!==s)}
-async function request(path,{method='GET',body=null,auth=true,headers={}}={}){let h={'apikey':cfg.key,'Content-Type':'application/json',...headers};if(auth&&session?.access_token)h.Authorization='Bearer '+session.access_token;let r=await fetch(cfg.url+path,{method,headers:h,body:body===null?undefined:JSON.stringify(body)});let txt=await r.text(),json=txt?JSON.parse(txt):null;if(!r.ok)throw Error(json?.msg||json?.message||json?.error_description||json?.error||('HTTP '+r.status));return json}
-const table=(name,q='')=>request('/rest/v1/'+name+'?'+q);async function refreshToken(){if(!session?.refresh_token)return false;try{let s=await request('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:{refresh_token:session.refresh_token},auth:false});session=s;localStorage.setItem('fz_session',JSON.stringify(s));return true}catch{session=null;localStorage.removeItem('fz_session');return false}}
-async function loadData(redraw=true){if(!session)return;try{let [p,c,people]=await Promise.all([table('profiles','select=*&id=eq.'+encodeURIComponent(session.user.id)),table('checks','select=*&order=date.desc'),table('personnel','select=*&order=name.asc')]);profile=p?.[0];if(!profile)throw Error('Профиль не создан. Проверьте SQL и триггер.');checks=c||[];personnel=people||[];if(admin())profiles=await table('profiles','select=*&order=display_name.asc');$('#identity').textContent=profile.display_name+' · '+profile.role;if(redraw)render()}catch(e){notice('Ошибка синхронизации: '+e.message)}}
-async function start(){if(!cfg.url||!cfg.key||cfg.url.includes('YOUR_')){show('setup');return}let old;try{old=JSON.parse(localStorage.getItem('fz_session'))}catch{}if(old){session=old;if(await refreshToken()){show('system');await loadData();startPolling();return}}show('login')}
-function startPolling(){clearInterval(poll);poll=setInterval(async()=>{if(!session)return;if(Date.now()/1000>(session.expires_at||0)-90)await refreshToken();await loadData(!['checks','personnel','reports'].includes(page))},15000)}
-$('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{let s=await request('/auth/v1/token?grant_type=password',{method:'POST',auth:false,body:{email:$('#email').value.trim(),password:$('#password').value}});session=s;localStorage.setItem('fz_session',JSON.stringify(s));show('system');await loadData();startPolling()}catch(err){$('#loginError').textContent='Ошибка входа: '+err.message}};
-$('#nav').onclick=e=>{let b=e.target.closest('[data-page]');if(!b)return;if(b.dataset.page==='logout'){clearInterval(poll);session=null;profile=null;localStorage.removeItem('fz_session');show('login');$('#identity').textContent='Вход';return}page=b.dataset.page;$('#nav').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));render()};
-function render(){let app=$('#app');if(!profile)return;if(page==='dashboard')dashboard();if(page==='checks')checkForm();if(page==='history')history();if(page==='personnel')peoplePage();if(page==='reports')reports();if(page==='accounts')accounts()}
-function dashboard(){let c=checks.filter(x=>x.date===today());$('#app').innerHTML=`<h2>Панель управления</h2><p class="muted">${E(today())} · ${E(profile.display_name)} · синхронизация каждые 15 секунд</p><div class="grid"><div class="panel"><div class="muted">Доступные подразделения</div><div class="metric">${units().length}</div></div><div class="panel"><div class="muted">Проверено сегодня</div><div class="metric">${c.length}</div></div><div class="panel"><div class="muted">В строю</div><div class="metric">${c.reduce((a,x)=>a+x.present,0)}</div></div><div class="panel"><div class="muted">Личный состав</div><div class="metric">${personnel.length}</div></div></div><h3>Подразделения</h3><div class="grid">${(admin()?U:units()).map(u=>{let x=c.find(v=>v.unit===u);return `<div class="panel"><h3>${E(u)}</h3><span class="badge">${E(x?.status||'Не проверено')}</span><p>${x?`${x.present} / ${x.total} в строю`:'Нет доклада за сегодня'}</p></div>`}).join('')}</div>`}
-async function upsert(name,obj,conflict){return request('/rest/v1/'+name+'?on_conflict='+conflict,{method:'POST',body:obj,headers:{'Prefer':'resolution=merge-duplicates,return=representation'}})}
-function checkForm(){let available=units();if(!available.length){$('#app').innerHTML='<h2>Проверки</h2><p>Нет прав на заполнение проверок.</p>';return}$('#app').innerHTML=`<h2>Ежедневная проверка</h2><div class="panel"><div class="grid"><div><label>Дата</label><input id="date" type="date" value="${today()}"></div><div><label>Подразделение</label><select id="unit">${available.map(u=>`<option>${E(u)}</option>`).join('')}</select></div></div><form id="checkForm"><div class="grid"><div><label>Всего</label><input name="total" type="number" min="0" required></div><div><label>В строю</label><input name="present" type="number" min="0" required></div></div><label>Состояние</label><select name="status"><option>Без замечаний</option><option>Есть замечания</option><option>Не готово</option></select><label>Проделанная работа</label><textarea name="work"></textarea><label>Замечания</label><textarea name="issues"></textarea><label>Задачи</label><textarea name="tasks"></textarea><button class="btn">Сохранить в общей базе</button></form></div>`;let f=$('#checkForm');function fill(){let c=checks.find(x=>x.date===$('#date').value&&x.unit===$('#unit').value);for(let k of ['total','present','status','work','issues','tasks'])f.elements[k].value=c?.[k]??(k==='status'?'Без замечаний':'')}$('#date').onchange=$('#unit').onchange=fill;fill();f.onsubmit=async e=>{e.preventDefault();let data=Object.fromEntries(new FormData(f));if(+data.present>+data.total){notice('Явка больше общей численности');return}try{await upsert('checks',{date:$('#date').value,unit:$('#unit').value,total:+data.total,present:+data.present,status:data.status,work:data.work,issues:data.issues,tasks:data.tasks},'date,unit');notice('Проверка синхронизирована');await loadData()}catch(err){notice('Ошибка сохранения: '+err.message)}}}
-function history(){let rows=[...checks].sort((a,b)=>b.date.localeCompare(a.date));$('#app').innerHTML=`<h2>История проверок</h2><div class="panel"><div class="table"><table><thead><tr><th>Дата</th><th>Подразделение</th><th>Явка</th><th>Статус</th><th>Действия</th></tr></thead><tbody>${rows.map(c=>`<tr><td>${E(c.date)}</td><td>${E(c.unit)}</td><td>${c.present}/${c.total}</td><td>${E(c.status)}</td><td><button class="btn secondary" data-view="${c.id}">Открыть</button> ${can(c.unit)?`<button class="btn danger" data-delete="${c.id}">Удалить</button>`:''}</td></tr>`).join('')||'<tr><td colspan="5">Записей нет</td></tr>'}</tbody></table></div></div>`;$('#app tbody').onclick=async e=>{let b=e.target.closest('button');if(!b)return;let c=checks.find(x=>x.id===(b.dataset.view||b.dataset.delete));if(!c)return;if(b.dataset.view){alert(`${c.date} — ${c.unit}\nЯвка: ${c.present}/${c.total}\n${c.status}\nРабота: ${c.work}\nЗамечания: ${c.issues}\nЗадачи: ${c.tasks}`);return}if(confirm('Удалить запись?'))try{await request('/rest/v1/checks?id=eq.'+c.id,{method:'DELETE'});await loadData()}catch(err){notice(err.message)}}}
-function peoplePage(){let available=units(),canEdit=available.length>0;$('#app').innerHTML=`<h2>Личный состав</h2>${canEdit?`<div class="panel"><h3>Добавить / изменить военнослужащего</h3><form id="personForm"><input type="hidden" name="id"><label>RP-ник</label><input name="name" maxlength="100" required><div class="grid"><div><label>Звание</label><input name="rank"></div><div><label>Должность</label><input name="position"></div></div><label>Подразделение</label><select name="unit">${available.map(u=>`<option>${E(u)}</option>`).join('')}</select><button class="btn">Сохранить</button> <button class="btn secondary" type="reset">Очистить</button></form></div>`:''}<div class="panel table"><table><thead><tr><th>Имя</th><th>Звание</th><th>Должность</th><th>Подразделение</th><th></th></tr></thead><tbody>${personnel.map(p=>`<tr><td>${E(p.name)}</td><td>${E(p.rank)}</td><td>${E(p.position)}</td><td>${E(p.unit)}</td><td>${can(p.unit)?`<button class="btn secondary" data-edit="${p.id}">Изменить</button> <button class="btn danger" data-delete="${p.id}">Удалить</button>`:''}</td></tr>`).join('')||'<tr><td colspan="5">Нет записей</td></tr>'}</tbody></table></div>`;let f=$('#personForm');if(f)f.onsubmit=async e=>{e.preventDefault();let x=Object.fromEntries(new FormData(f));let ident=x.id;delete x.id;try{if(ident){await request('/rest/v1/personnel?id=eq.'+ident,{method:'PATCH',body:x})}else await request('/rest/v1/personnel',{method:'POST',body:x});notice('Личный состав обновлён');await loadData()}catch(err){notice('Ошибка: '+err.message)}};$('#app tbody').onclick=async e=>{let b=e.target.closest('button');if(!b)return;let p=personnel.find(x=>x.id===(b.dataset.edit||b.dataset.delete));if(!p)return;if(b.dataset.edit&&f){for(let k of ['id','name','rank','position','unit'])f.elements[k].value=p[k];window.scrollTo(0,0)}if(b.dataset.delete&&confirm('Удалить военнослужащего?'))try{await request('/rest/v1/personnel?id=eq.'+p.id,{method:'DELETE'});await loadData()}catch(err){notice(err.message)}}}
-function reportText(d){let items=checks.filter(x=>x.date===d);return `**FORT ZANCUDO | ЕЖЕДНЕВНЫЙ ДОКЛАД**\n**Дата:** ${d}\n**Составил:** ${profile.display_name}\n\n`+(admin()?U:units()).map(u=>{let c=items.find(x=>x.unit===u);return `**${u}**\n${c?`Явка: ${c.present}/${c.total}\nСостояние: ${c.status}\nРабота: ${c.work||'—'}\nЗамечания: ${c.issues||'—'}\nЗадачи: ${c.tasks||'—'}`:'Проверка не проведена'}`}).join('\n\n')+`\n\n**Итого:** ${items.length} проверок, ${items.reduce((a,x)=>a+x.present,0)} в строю.`}
-function reports(){$('#app').innerHTML=`<h2>Доклад для Discord</h2><div class="panel"><label>Дата</label><input type="date" id="reportDate" value="${today()}"><label>Текст</label><textarea id="report" style="min-height:390px"></textarea><button class="btn" id="copy">Скопировать</button></div>`;let d=$('#reportDate');d.onchange=()=>$('#report').value=reportText(d.value);d.onchange();$('#copy').onclick=async()=>{try{await navigator.clipboard.writeText($('#report').value);notice('Скопировано')}catch{$('#report').select();notice('Текст выделен — скопируйте вручную')}}}
-function accounts(){if(!admin()){$('#app').innerHTML='<h2>Доступы</h2><p>Управление учётными записями доступно только руководству.</p>';return}$('#app').innerHTML=`<h2>Управление ролями</h2><p class="note">Учётные записи (email/пароль) создаются в Supabase → Authentication → Users. Здесь назначаются роли и подразделения. Никогда не выдавайте пользователям ключ service_role.</p><div class="panel table"><table><thead><tr><th>Пользователь</th><th>Роль</th><th>Подразделение</th><th></th></tr></thead><tbody>${profiles.map(p=>`<tr><td><input data-id="${p.id}" data-k="display_name" value="${E(p.display_name)}"></td><td><select data-id="${p.id}" data-k="role">${['viewer','commander','commandant','general'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td><td><select data-id="${p.id}" data-k="unit"><option value="">—</option>${U.map(u=>`<option ${u===p.unit?'selected':''}>${E(u)}</option>`).join('')}</select></td><td><button class="btn" data-save="${p.id}">Сохранить</button></td></tr>`).join('')}</tbody></table></div>`;$('#app tbody').onclick=async e=>{let b=e.target.closest('[data-save]');if(!b)return;let id=b.dataset.save,vals={};$('#app').querySelectorAll('[data-id="'+id+'"]').forEach(x=>vals[x.dataset.k]=x.value||null);if(vals.role==='commander'&&!vals.unit){notice('Укажите подразделение командира');return}if(!confirm('Изменить права пользователя?'))return;try{await request('/rest/v1/profiles?id=eq.'+id,{method:'PATCH',body:vals});notice('Роли обновлены');await loadData()}catch(err){notice('Ошибка: '+err.message)}}}
-window.addEventListener('error',e=>notice('Ошибка приложения: '+e.message));start();if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
-</script></body></html>
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta 
+name="viewport" content="width=device-width,initial-scale=1"><meta 
+name="theme-color" content="#111b19"><link rel="manifest" 
+href="manifest.webmanifest"> < title> Fort Zancudo Online< /title> < style>
+:root{font-family:system-ui,Arial,sans-
+serif;color:#e8f0e9;background:#0b1411}*{box-sizing:border-box}
+body{margin:0}header{background:#16251f;border-bottom:1px solid 
+#34493b;padding:17px;display:flex;
+justify-content:space-between;align-items:center;gap:8px}h1{font-
+size:19px;letter- spacing:1px;margin
+:0}h2{font-size:23px}h3{margin:0 0 10px}small,.muted{color:#abc0af}
+button,input,textarea,select{font
+:inherit}button{cursor:pointer}
+input,textarea,select{display:block;width:100%;padding:12px;backgroun
+d:#0c1913;color:#f3f8f3;border:1px solid #506657;border-
+radius:9px;margin:5px 0 13px}textarea{min- he
+ight:75px}label{font-size:13px;color:#bfd2c2}.btn{padding:11px 
+15px;background:#b0d29f;color:#132018
+;border:0;border-radius:9px;font-
+weight:700}.secondary{background:#2c4436;color:#e9f5e9}.danger{back
+ground:#633532;color:#fff}.wrap{max-
+width:1100px;margin:auto;padding:18px}.panel{background:#16241d;
+border:1px solid #365040;border-radius:14px;padding:17px;margin:14px 
+0}.grid{display:grid;grid- templ
+ate-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.metric{font-
+size:32px;color:#b5d9a8;font- we
+ight:700}.row{display:flex;gap:9px;align-items:center;flex-
+wrap:wrap}.row> *{flex:1}.nav{display:flex
+;gap:6px;overflow-x:auto;padding:10px;background:#101e17}.nav 
+button{border:0;border- radius:9px;padd
+ing:12px;background:transparent;color:#d4e7d9;white-
+space:nowrap}.nav .active{background:#315440}.hi
+dden{display:none!important}.error{color:#ffaaa4;white-space:pre-
+wrap}.success{color:#b5e8af}.table{
+overflow:auto}table{width:100%;border-collapse:collapse;min-
+width:550px}td,th{text- align:left;paddin
+g:10px;border-bottom:1px solid #3c5142;font-
+size:14px}.badge{background:#304f3c;border- radius:20px;p
+adding:5px 9px;font-size:12px}.note{font-size:13px;color:#a8c2ae}
+#notice{position:fixed;bottom:10px;
+left:10px;right:10px;max-
+width:600px;margin:auto;background:#3b5c44;padding:12px;border-
+radius:9px;d
+isplay:none;z-index:10}#login{max-width:480px;margin:35px 
+auto}.spinner{padding:25px;text- align:cent
+er}button:disabled{opacity:.45;cursor:not- allowed}
+</style></head><body><header><div><h1>  FORT ZANCUDO</
+  h1><small>COMMANDANT CONTROL SYSTEM · ONLINE</small></
+div><span id="identity" class="badge">Вход</span></header><section 
+id="setup" class="wrap hi
+dden"><div class="panel"><h2>Первичная настройка</
+h2> < p> Откройте файл < b> config.js< /b> и вставьте UR
+L проекта Supabase и <b>anon / publishable key</b>. Никогда не 
+вставляйте service_role или secret ke
+y.</p><p class="note">После настройки опубликуйте все файлы на 
+GitHub Pages через HTTPS.< /p> < /div> < /
+section><section id="login" class="wrap hidden"><div 
+class="panel"> < h2> Вход в систему< /h2> < form id="
+loginForm"><label>Email (логин)</label><input id="email" type="email" 
+required autocomplete="usernam
+e" placeholder="commander@example.com"><label>Пароль</
+label> < input id="password" type="password" req
+uired autocomplete="current-password"><button class="btn" 
+type="submit"> Войти< /button> < /form> < p id="
+loginError" class="error"></p><p class="note"><button class="btn 
+secondary" type="button" onclick="s
+how('system');updateNav();render()">Продолжить как гость</button></
+p> < p class="note"> Учётные записи
+создаёт администратор в Supabase. Самостоятельная регистрация 
+отключена в интерфейсе.< /p> < /div> < /sec
+tion><section id="system" class="hidden"><nav class="nav" 
+id="nav"> < button data- page="dashboard" cla
+ss="active">Обзор</button><button data-page="checks">Проверки</
+button> < button data- page="history"> Ис
+тория</button><button data-page="personnel">Личный состав</
+button> < button data- page="reports"> Discor
+d</button><button data-page="accounts">Доступы</button><button 
+data- page="logout"> Выход< /button> < /na
+v><main id="app" class="wrap"></main></section><div id="notice"></
+div> < script src="config.js"> < /scri
+pt> < script>
+'use strict';
+const U=['Delta Force','Military Police','Military Academy','Sloppy 
+Division'];const $=s=>document.querySelector(s);const 
+E=x=>String(x??'').replace(/[&<>"']/
+g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const 
+today=()=>{let d=new Date();return `${d.getFullYear()}-$
+{String(d.getMonth()+1).padStart(2,'0')}-$
+{String(d.getDate()).padStart(2,'0')}`};
+const cfg=window.FZ_CONFIG||{};let 
+session=null,profile=null,page='dashboard',checks=[],personnel=[],profiles
+=[],poll=null;const 
+admin=()=>['general','commandant'].includes(profile?.role),can=u=>admin(
+)||(profile?.role==='commander'&&profile.unit===u);const 
+  units=()=>admin()?U:profile?.role==='commander'?[profile.unit]:[];const 
+guest=()=> !session;
+const notice=s=>{let n=$
+('#notice');n.textContent=s;n.style.display='block';setTimeout(()=>n.style.di
+splay='none',3200)};
+function show(s){for(let k of ['setup','login','system'])$
+('#'+k).classList.toggle('hidden',k!==s)}
+async function request(path,
+{method='GET',body=null,auth=true,headers={}}={}){let 
+h={'apikey':cfg.key,'Content-Type':'application/
+json',...headers};if(auth&&session?.access_token)h.Authorization='Bearer 
+'+session.access_token;let r=await fetch(cfg.url+path,
+{method,headers:h,body:body===null?
+undefined:JSON.stringify(body)});let txt=await r.text(),json=txt?
+JSON.parse(txt):null;if(!r.ok)throw Error(json?.msg||json?.message||
+json?.error_description||json?.error||('HTTP '+r.status));return json}
+const table=(name,q='')=>request('/rest/v1/'+name+'?'+q);async function 
+refreshToken(){if(!session?.refresh_token)return false;try{let s=await 
+request('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:
+{refresh_token:session.refresh_token},auth:false});session=s;localStorage.s
+etItem('fz_session',JSON.stringify(s));return true}
+catch{session=null;localStorage.removeItem('fz_session');return false}}
+async function loadData(redraw=true){try{if(guest()){let [c,people]=await 
+Promise.all([table('checks','select=*&order=date.desc'),table('personnel','se
+lect=*&order=name.asc')]);checks=c||[];personnel=
+people||[];profile=null;$('#identity').textContent='Гость · просмотр'}
+else{let [p,c,people]=await Pr
+omise.all([table('profiles','select=*&id=eq.'+encodeURIComponent(session.
+user.id)),table('checks','s
+elect=*&order=date.desc'),table('personnel','select=*&order=name.asc')]);
+profile=p?.[0];if(!profile)
+throw Error('Профиль не создан. Проверьте SQL и триггер.');checks=c||
+[];personnel=people||[];if(admi
+n())profiles=await table('profiles','select=*&order=display_name.asc');$
+('#identity').textContent=pr
+ofile.display_name+' · '+profile.role}updateNav();if(redraw)render()}catch(e)
+{notice('Ошибка синхрон
+изации: '+e.message)}}
+async function start(){if(!cfg.url||!cfg.key||cfg.url.includes('YOUR_'))
+{show('setup');return}let 
+old;try{old=JSON.parse(localStorage.getItem('fz_session'))}catch{}if(old)
+{session=old;if(await refreshToken()){show('system');await 
+loadData();startPolling();return}}show('system');await 
+loadData();startPolling()}
+function startPolling()
+{clearInterval(poll);poll=setInterval(async()=>{if(session&&Date.now()/
+1000>(session.expires_at||0)-90)await refreshToken();await loadData(!
+['checks','personnel','reports'].includes(page))},15000)}
+$('#loginForm').onsubmit=async e=>{e.preventDefault();$
+('#loginError').textContent='';try{let s=await request('/auth/v1/token?
+grant_type=password',{method:'POST',auth:false,body:{email:$
+('#email').value.trim(),password:$
+('#password').value}});session=s;localStorage.setItem('fz_session',JSON.stri
+ngify(s));page='dashboard';show('system');await loadData();startPolling()}
+catch(err){$('#loginError').textContent='Ошибка входа: '+err.message}};
+$('#nav').onclick=async e=>{let b=e.target.closest('[data-page]');if(!
+b)return;if(b.dataset.page==='logout')
+{clearInterval(poll);session=null;profile=null;localStorage.removeItem('fz_se
+ssion');page='dashboard';show('system');await 
+loadData();startPolling();return}if(b.dataset.page==='login')
+{show('login');return}page=b.dataset.page;$
+('#nav').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x==
+=b));render()};
+function updateNav(){let nav=$('#nav');nav.querySelector('[data-
+page="checks"]').classList.toggle('hidden',!
+units().length);nav.querySelector('[data-
+page="reports"]').classList.toggle('hidden',guest()
+);nav.querySelector('[data-page="accounts"]').classList.toggle('hidden',!
+admin());nav.querySelector(
+'[data-page="logout"]').classList.toggle('hidden',guest());let 
+login=nav.querySelector('[data- page="
+login"]');if(!login)
+{login=document.createElement('button');login.dataset.page='login';login.t
+extCon
+tent='Войти';nav.append(login)}login.classList.toggle('hidden',!
+guest());if(guest()&&['checks','repo
+rts','accounts'].includes(page))page='dashboard';nav.querySelectorAll('butt
+on').forEach(x=> x.classLi
+st.toggle('active',x.dataset.page===page))}
+function render(){let app=$
+('#app');if(page==='dashboard')dashboard();if(page==='checks')checkForm
+();if(page==='history')history();if(page==='personnel')peoplePage();if(page=
+=='reports')reports();if(page==='accounts')accounts()}
+function dashboard(){let c=checks.filter(x=>x.date===today());$
+('#app').innerHTML=`<h2>Панель управления</h2><p class="muted">$
+{E(today())} · ${E(profile?.display_name||'Гость')} · синхронизация кажды
+е 15 секунд</p><div class="grid"><div class="panel"><div 
+class="muted"> Доступные подразделения< /div>
+<div class="metric">${guest()?U.length:units().length}</div></div><div 
+class="panel"> < div class="mut
+ed">Проверено сегодня</div><div class="metric">${c.length}</div></
+div> < div class="panel"> < div class=
+"muted">В строю</div><div class="metric">$
+{c.reduce((a,x)=> a+x.present,0)}< /div> < /div> < div class="pa
+nel"><div class="muted">Личный состав</div><div class="metric">$
+{personnel.length}< /div> < /div> < /div>
+<h3>Подразделения</h3><div class="grid">${(guest()||admin()?
+U:units()).map(u=> {let x=c.find(v=> v.uni
+t===u);return `<div class="panel"><h3>${E(u)}</h3><span 
+class="badge"> ${E(x?.status||'Не проверено')
+}</span><p>${x?`${x.present} / ${x.total} в строю`:'Нет доклада за 
+сегодня'}< /p> < /div> `}).join('')}<
+/div> `}
+async function upsert(name,obj,conflict){return request('/rest/
+v1/'+name+'?on_conflict='+conflict,{method:'POST',body:obj,headers:
+{'Prefer':'resolution=merge- duplicates,return=representation'}})}
+function checkForm(){let available=units();if(!available.length){$
+('#app').innerHTML='<h2>Проверки</h2><p>Нет прав на заполнение 
+проверок.</p>';return}$('#app').innerHTML=`<h2>Ежедневная 
+проверка< /h2>
+<div class="panel"><div class="grid"><div><label>Дата</label><input 
+id="date" type="date" value="${t
+oday()}"></div><div><label>Подразделение</label><select id="unit">$
+{available.map(u=> `< option> ${E(u)
+}</option>`).join('')}</select></div></div><form id="checkForm"><div 
+class="grid"> < div> < label> Всего<
+/label><input name="total" type="number" min="0" required></
+div> < div> < label> В строю< /label> < input na
+me="present" type="number" min="0" required></div></
+div> < label> Состояние< /label> < select name="status
+"><option>Без замечаний</option><option>Есть замечания</
+option> < option> Не готово< /option> < /select> < l
+abel>Проделанная работа</label><textarea name="work"></
+textarea> < label> Замечания< /label> < textarea na
+me="issues"></textarea><label>Задачи</label><textarea 
+name="tasks"> < /textarea> < button class="btn"> Со
+хранить в общей базе</button></form></div>`;let f=$
+('#checkForm');function fill(){let c=checks.find(
+x=>x.date===$('#date').value&&x.unit===$('#unit').value);for(let k of 
+['total','present','status','w
+ork','issues','tasks'])f.elements[k].value=c?.[k]??(k==='status'?'Без 
+замечаний':'')}$('#date').onch
+ange=$('#unit').onchange=fill;fill();f.onsubmit=async 
+e=> {e.preventDefault();let data=Object.fromEnt
+ries(new FormData(f));if(+data.present>+data.total){notice('Явка больше 
+общей численности');return}t
+ry{await upsert('checks',{date:$('#date').value,unit:$('#unit').value,total:
++data.total,present:+dat
+a.present,status:data.status,work:data.work,issues:data.issues,tasks:data.
+tasks},'date,unit');notice
+('Проверка синхронизирована');await loadData()}catch(err)
+  {notice('Ошибка сохранения: '+err.message)}
+}}
+function history(){let 
+rows=[...checks].sort((a,b)=>b.date.localeCompare(a.date));$
+('#app').innerHTML=`<h2>История проверок</h2><div 
+class="panel"><div class="table"><table><thead><tr><th>Дата</
+th> < th
+>Подразделение</th><th>Явка</th><th>Статус</
+th> < th> Действия< /th> < /tr> < /thead> < tbody> ${rows.map(c=> `<
+tr><td>${E(c.date)}</td><td>${E(c.unit)}</td><td>${c.present}/${c.total}
+< /td> < td> ${E(c.status)}< /td>
+<td><button class="btn secondary" data-view="${c.id}">Открыть</
+button> ${can(c.unit)?`< button class=
+"btn danger" data-delete="${c.id}">Удалить</button>`:''}</td></
+tr> `).join('')||'< tr> < td colspan="5">
+Записей нет</td></tr>'}</tbody></table></div></div>`;$('#app 
+tbody').onclick=async e=> {let b=e.targe
+t.closest('button');if(!b)return;let c=checks.find(x=>x.id===(b.dataset.view||
+b.dataset.delete));if(
+!c)return;if(b.dataset.view){alert(`${c.date} — ${c.unit}\nЯвка: ${c.present}/$
+{c.total}\n${c.status
+}\nРабота: ${c.work}\nЗамечания: ${c.issues}\nЗадачи: ${c.tasks}`);return}
+if(confirm('Удалить запись
+?'))try{await request('/rest/v1/checks?id=eq.'+c.id,
+{method:'DELETE'});await loadData()}catch(err){n
+otice(err.message)}}}
+function peoplePage(){let available=units(),canEdit=available.length>0;$
+('#app').innerHTML=`<h2>Личный состав</h2>${canEdit?`<div 
+class="panel"><h3>Добавить / изменить военнослужащего</h3><form 
+id="pe
+rsonForm"><input type="hidden" name="id"><label>RP-ник</
+label> < input name="name" maxlength="100" req
+uired><div class="grid"><div><label>Звание</label><input 
+name="rank"> < /div> < div> < label> Должность< /la
+bel><input name="position"></div></div><label>Подразделение</
+label> < select name="unit"> ${available.m
+ap(u=>`<option>${E(u)}</option>`).join('')}</select><button 
+class="btn"> Сохранить< /button> < button c
+lass="btn secondary" type="reset">Очистить</button></form></div>`:''}
+< div class="panel table"> < table
+><thead><tr><th>Имя</th><th>Звание</th><th>Должность</
+th> < th> Подразделение< /th> < th> < /th> < /tr> < /thead
+><tbody>${personnel.map(p=>`<tr><td>${E(p.name)}</td><td>$
+{E(p.rank)}< /td> < td> ${E(p.position)}< /td> <
+td>${E(p.unit)}</td><td>${can(p.unit)?`<button class="btn secondary" 
+data- edit="${p.id}"> Изменить< /b
+utton> <button class="btn danger" data-delete="${p.id}">Удалить</
+button> `:''}< /td> < /tr> `).join('')||
+'<tr><td colspan="5">Нет записей</td></tr>'}</tbody></table></
+div> `;let f=$('#personForm');if(f)f.on
+submit=async e=>{e.preventDefault();let x=Object.fromEntries(new 
+FormData(f));let ident=x.id;delete
+x.id;try{if(ident){await request('/rest/v1/personnel?id=eq.'+ident,
+{method:'PATCH',body:x})}else awa
+it request('/rest/v1/personnel',{method:'POST',body:x});notice('Личный 
+состав обновлён');await loadD
+ata()}catch(err){notice('Ошибка: '+err.message)}};$('#app 
+tbody').onclick=async e=> {let b=e.target.c
+losest('button');if(!b)return;let p=personnel.find(x=>x.id===(b.dataset.edit||
+b.dataset.delete));if(
+!p)return;if(b.dataset.edit&&f){for(let k of 
+['id','name','rank','position','unit'])f.elements[k].va
+lue=p[k];window.scrollTo(0,0)}if(b.dataset.delete&&confirm('Удалить 
+военнослужащего?'))try{await req
+uest('/rest/v1/personnel?id=eq.'+p.id,{method:'DELETE'});await loadData()}
+catch(err){notice(err.mess
+age)}}}
+function reportText(d){let items=checks.filter(x=>x.date===d);return 
+`**FORT ZANCUDO | ЕЖЕДНЕВНЫЙ ДОКЛАД**\n**Дата:** ${d}
+\n**Составил:** ${profile.display_name}\n\n`+(guest()||admin()?
+U:units()).map(
+u=>{let c=items.find(x=>x.unit===u);return `**${u}**\n${c?`Явка: $
+{c.present}/${c.total}\nСостояние:
+ ${c.status}\nРабота: ${c.work||'—'}\nЗамечания: ${c.issues||'—'}\nЗадачи: 
+${c.tasks||'—'}`:'Проверк
+а не проведена'}`}).join('\n\n')+`\n\n**Итого:** ${items.length} проверок, 
+${items.reduce((a,x)=> a+x
+.present,0)} в строю.`}
+function reports(){$('#app').innerHTML=`<h2>Доклад для Discord</
+h2><div class="panel"><label>Дата</label><input type="date" 
+id="reportDate" value="${today()}"><label>Текст</label><textarea 
+id="report"
+ style="min-height:390px"></textarea><button class="btn" 
+id="copy"> Скопировать< /button> < /div> `;let d
+=$('#reportDate');d.onchange=()=>$
+('#report').value=reportText(d.value);d.onchange();$('#copy').oncl
+ick=async()=>{try{await navigator.clipboard.writeText($
+('#report').value);notice('Скопировано')}catc
+h{$('#report').select();notice('Текст выделен — скопируйте вручную')}}}
+function accounts(){if(!admin()){$('#app').innerHTML='<h2>Доступы</
+h2><p>Управление учётными записями доступно только 
+руководству.</p>';return}$('#app').innerHTML=`<h2>Управление 
+ролями< /h2> < p class="
+note">Учётные записи (email/пароль) создаются в Supabase → 
+Authentication → Users. Здесь назначаются
+ роли и подразделения. Никогда не выдавайте пользователям ключ 
+service_role.< /p> < div class="panel ta
+ble"><table><thead><tr><th>Пользователь</th><th>Роль</
+th> < th> Подразделение< /th> < th> < /th> < /tr> < /thead
+><tbody>${profiles.map(p=>`<tr><td><input data-id="${p.id}" data-
+k="display_name" value="${E(p.displ
+ay_name)}"></td><td><select data-id="${p.id}" data-k="role">$
+{['viewer','commander','commandant','ge
+neral'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}
+< /select> < /td> < td> < sele
+ct data-id="${p.id}" data-k="unit"><option value="">—</option>$
+{U.map(u=> `< option ${u===p.unit?'sele
+cted':''}>${E(u)}</option>`).join('')}</select></td><td><button class="btn" 
+data- save="${p.id}"> Сохр
+анить</button></td></tr>`).join('')}</tbody></table></div>`;$('#app 
+tbody').onclick=async e=> {let b=
+e.target.closest('[data-save]');if(!b)return;let id=b.dataset.save,vals={};$
+('#app').querySelectorAl
+l('[data-id="'+id+'"]').forEach(x=>vals[x.dataset.k]=x.value||
+null);if(vals.role==='commander'&&!val
+s.unit){notice('Укажите подразделение командира');return}if(!
+confirm('Изменить права пользователя?')
+)return;try{await request('/rest/v1/profiles?id=eq.'+id,
+{method:'PATCH',body:vals});notice('Роли обн
+овлены');await loadData()}catch(err){notice('Ошибка: '+err.message)}}}
+window.addEventListener('error',e=>notice('Ошибка приложения: 
+'+e.message));start();if('serviceWorker' in 
+navigator&&location.protocol==='https:')navigator.serviceWorker.register('
+./sw.js').catch(()=> {});
+< /script> < /body> < /html>
