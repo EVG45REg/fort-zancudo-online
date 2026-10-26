@@ -1,0 +1,18 @@
+{
+  "name": "Комендатура Fort Zancudo",
+  "short_name": "Fort Zancudo",
+  "description": "Система управления комендатурой Fort Zancudo",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#091411",
+  "theme_color": "#14251e",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
